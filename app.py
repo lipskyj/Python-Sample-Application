@@ -1,233 +1,82 @@
-from __future__ import absolute_import
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador de Cuentos</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        #story {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <h1>Generador de Cuentos</h1>
+    <p>Ingrese 5 palabras separadas por comas:</p>
+    <input type="text" id="words" placeholder="luna, gato, bosque, magia, sueño">
+    <button onclick="generateStory()">Generar Cuento</button>
+    <div id="story"></div>
 
-import json
-import os
-from urlparse import urlparse
+    <script>
+        async function generateStory() {
+            const wordsInput = document.getElementById('words');
+            const storyDiv = document.getElementById('story');
+            const words = wordsInput.value.split(',').map(word => word.trim());
 
-from flask import Flask, render_template, request, redirect, session
-from flask_sslify import SSLify
-from rauth import OAuth2Service
-import requests
+            if (words.length !== 5) {
+                storyDiv.innerHTML = '<p style="color: red;">Por favor, ingrese exactamente 5 palabras.</p>';
+                return;
+            }
 
-app = Flask(__name__, static_folder='static', static_url_path='')
-app.requests_session = requests.Session()
-app.secret_key = os.urandom(24)
+            storyDiv.innerHTML = '<p>Generando cuento...</p>';
 
-sslify = SSLify(app)
+            try {
+                const response = await fetch('/generar-cuento', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ palabras: words }),
+                });
 
-with open('config.json') as f:
-    config = json.load(f)
+                if (!response.ok) {
+                    throw new Error('Error en la respuesta del servidor');
+                }
 
-
-def generate_oauth_service():
-    """Prepare the OAuth2Service that is used to make requests later."""
-    return OAuth2Service(
-        client_id=os.environ.get('UBER_CLIENT_ID'),
-        client_secret=os.environ.get('UBER_CLIENT_SECRET'),
-        name=config.get('name'),
-        authorize_url=config.get('authorize_url'),
-        access_token_url=config.get('access_token_url'),
-        base_url=config.get('base_url'),
-    )
-
-
-def generate_ride_headers(token):
-    """Generate the header object that is used to make api requests."""
-    return {
-        'Authorization': 'bearer %s' % token,
-        'Content-Type': 'application/json',
-    }
-
-
-@app.route('/health', methods=['GET'])
-def health():
-    """Check the status of this application."""
-    return ';-)'
-
-
-@app.route('/', methods=['GET'])
-def signup():
-    """The first step in the three-legged OAuth handshake.
-
-    You should navigate here first. It will redirect to login.uber.com.
-    """
-    params = {
-        'response_type': 'code',
-        'redirect_uri': get_redirect_uri(request),
-        'scopes': ','.join(config.get('scopes')),
-    }
-    url = generate_oauth_service().get_authorize_url(**params)
-    return redirect(url)
-
-
-@app.route('/submit', methods=['GET'])
-def submit():
-    """The other two steps in the three-legged Oauth handshake.
-
-    Your redirect uri will redirect you here, where you will exchange
-    a code that can be used to obtain an access token for the logged-in use.
-    """
-    params = {
-        'redirect_uri': get_redirect_uri(request),
-        'code': request.args.get('code'),
-        'grant_type': 'authorization_code'
-    }
-    response = app.requests_session.post(
-        config.get('access_token_url'),
-        auth=(
-            os.environ.get('UBER_CLIENT_ID'),
-            os.environ.get('UBER_CLIENT_SECRET')
-        ),
-        data=params,
-    )
-    session['access_token'] = response.json().get('access_token')
-
-    return render_template(
-        'success.html',
-        token=response.json().get('access_token')
-    )
-
-
-@app.route('/demo', methods=['GET'])
-def demo():
-    """Demo.html is a template that calls the other routes in this example."""
-    return render_template('demo.html', token=session.get('access_token'))
-
-
-@app.route('/products', methods=['GET'])
-def products():
-    """Example call to the products endpoint.
-
-    Returns all the products currently available in San Francisco.
-    """
-    url = config.get('base_uber_url') + 'products'
-    params = {
-        'latitude': config.get('start_latitude'),
-        'longitude': config.get('start_longitude'),
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='products',
-        data=response.text,
-    )
-
-
-@app.route('/time', methods=['GET'])
-def time():
-    """Example call to the time estimates endpoint.
-
-    Returns the time estimates from the given lat/lng given below.
-    """
-    url = config.get('base_uber_url') + 'estimates/time'
-    params = {
-        'start_latitude': config.get('start_latitude'),
-        'start_longitude': config.get('start_longitude'),
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='time',
-        data=response.text,
-    )
-
-
-@app.route('/price', methods=['GET'])
-def price():
-    """Example call to the price estimates endpoint.
-
-    Returns the time estimates from the given lat/lng given below.
-    """
-    url = config.get('base_uber_url') + 'estimates/price'
-    params = {
-        'start_latitude': config.get('start_latitude'),
-        'start_longitude': config.get('start_longitude'),
-        'end_latitude': config.get('end_latitude'),
-        'end_longitude': config.get('end_longitude'),
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='price',
-        data=response.text,
-    )
-
-
-@app.route('/history', methods=['GET'])
-def history():
-    """Return the last 5 trips made by the logged in user."""
-    url = config.get('base_uber_url_v1_1') + 'history'
-    params = {
-        'offset': 0,
-        'limit': 5,
-    }
-
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-        params=params,
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='history',
-        data=response.text,
-    )
-
-
-@app.route('/me', methods=['GET'])
-def me():
-    """Return user information including name, picture and email."""
-    url = config.get('base_uber_url') + 'me'
-    response = app.requests_session.get(
-        url,
-        headers=generate_ride_headers(session.get('access_token')),
-    )
-
-    if response.status_code != 200:
-        return 'There was an error', response.status_code
-    return render_template(
-        'results.html',
-        endpoint='me',
-        data=response.text,
-    )
-
-
-def get_redirect_uri(request):
-    """Return OAuth redirect URI."""
-    parsed_url = urlparse(request.url)
-    if parsed_url.hostname == 'localhost':
-        return 'http://{hostname}:{port}/submit'.format(
-            hostname=parsed_url.hostname, port=parsed_url.port
-        )
-    return 'https://{hostname}/submit'.format(hostname=parsed_url.hostname)
-
-if __name__ == '__main__':
-    app.debug = os.environ.get('FLASK_DEBUG', True)
-    app.run(port=7000)
+                const data = await response.json();
+                storyDiv.innerHTML = `<p>${data.cuento}</p>`;
+            } catch (error) {
+                storyDiv.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+    </script>
+</body>
+</html>
